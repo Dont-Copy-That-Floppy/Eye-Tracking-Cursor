@@ -1,0 +1,11 @@
+opencv-python           # Computer vision library for eye tracking
+dlib                    # Facial landmark detection
+pyautogui               # Mouse control for blink-based actions
+numpy                   # Numerical operations for gaze mapping
+scipy                   # EAR calculation for blink detection
+tk                      # GUI library for the main application
+pyttsx3                 # Text-to-speech library for voice feedback
+keyboard                # Global keyboard shortcut support
+pystray                 # System tray integration
+pillow                  # Image library for creating tray icons
+screeninfo              # Multi-monitor detection and support
