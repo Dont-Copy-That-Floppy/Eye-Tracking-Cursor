@@ -9,3 +9,4 @@ keyboard                # Global keyboard shortcut support
 pystray                 # System tray integration
 pillow                  # Image library for creating tray icons
 screeninfo              # Multi-monitor detection and support
+pygrabber               # Detailed Camera device detection and parsing

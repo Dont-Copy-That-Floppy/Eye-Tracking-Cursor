@@ -1,91 +1,94 @@
 import cv2
 import numpy as np
-from screeninfo import get_monitors
 import os
+from screeninfo import get_monitors
+from utils.homography import HomographyManager
+from eye_tracker import EyeTracker  # Import EyeTracker for gaze input
+import time
 
 
 class Calibration:
-    """Handles calibration for accurate gaze tracking with multi-monitor support."""
+    """Handles calibration for accurate gaze tracking."""
 
     @staticmethod
     def run_calibration():
-        """Runs the calibration process for all monitors."""
-        monitors = get_monitors()  # Get information about all connected monitors
-        calibration_data = {}
+        """Runs the calibration process."""
+        # Setup screen dimensions
+        monitor = get_monitors()[0]
+        window_width, window_height = monitor.width // 2, monitor.height // 2
+        cv2.namedWindow("Calibration", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Calibration", window_width, window_height)
+        cv2.moveWindow("Calibration", monitor.width // 4, monitor.height // 4)
 
-        for monitor in monitors:
-            screen_width = monitor.width
-            screen_height = monitor.height
-            print(f"Calibrating for monitor: {monitor.name} ({screen_width}x{screen_height})")
+        # Calibration grid points
+        grid_points = [
+            (window_width // 4, window_height // 4),
+            (window_width // 2, window_height // 4),
+            (3 * window_width // 4, window_height // 4),
+            (window_width // 4, window_height // 2),
+            (window_width // 2, window_height // 2),
+            (3 * window_width // 4, window_height // 2),
+            (window_width // 4, 3 * window_height // 4),
+            (window_width // 2, 3 * window_height // 4),
+            (3 * window_width // 4, 3 * window_height // 4),
+        ]
 
-            # Define a 3x3 grid for calibration points
-            grid_points = [
-                (screen_width // 4, screen_height // 4),  # Top-left
-                (screen_width // 2, screen_height // 4),  # Top-center
-                (3 * screen_width // 4, screen_height // 4),  # Top-right
-                (screen_width // 4, screen_height // 2),  # Center-left
-                (screen_width // 2, screen_height // 2),  # Center
-                (3 * screen_width // 4, screen_height // 2),  # Center-right
-                (screen_width // 4, 3 * screen_height // 4),  # Bottom-left
-                (screen_width // 2, 3 * screen_height // 4),  # Bottom-center
-                (3 * screen_width // 4, 3 * screen_height // 4),  # Bottom-right
-            ]
+        detected_gaze_points = []
+        eye_tracker = EyeTracker()  # Initialize EyeTracker for real gaze input
+        cap = cv2.VideoCapture(0)  # Start webcam capture
 
-            detected_points = []
-            for point in grid_points:
-                # Show calibration marker
-                marker_frame = np.zeros((screen_height, screen_width, 3), dtype=np.uint8)
-                cv2.circle(marker_frame, point, 30, (0, 255, 0), -1)
-                cv2.imshow("Calibration", marker_frame)
+        if not cap.isOpened():
+            print("Error: Camera not accessible for calibration.")
+            return
 
-                # Mock gaze detection: Replace this with gaze capturing logic
-                key = cv2.waitKey(3000)  # Display marker for 3 seconds
-                if key == 27:  # Exit on Esc
+        print("Follow the green dots with your eyes. Press SPACE to capture, or wait 2 seconds.")
+
+        # Iterate through each calibration point
+        for i, point in enumerate(grid_points):
+            frame = np.zeros((window_height, window_width, 3), dtype=np.uint8)
+            cv2.circle(frame, point, 20, (0, 255, 0), -1)
+            cv2.putText(frame, f"Look at the dot ({i+1}/{len(grid_points)}).", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.imshow("Calibration", frame)
+
+            # Initialize gaze position capture
+            start_time = time.time()
+            gaze_x, gaze_y = 0, 0
+            gaze_samples = []
+
+            while time.time() - start_time < 2:  # Capture gaze for 2 seconds
+                ret, camera_frame = cap.read()
+                if not ret:
+                    continue
+                gray = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2GRAY)
+
+                # Get gaze position
+                gaze_position = eye_tracker.calculate_gaze_position(gray)
+                if gaze_position:
+                    gaze_samples.append(gaze_position)
+
+                if cv2.waitKey(1) & 0xFF == ord(" "):  # Press SPACE to confirm point
                     break
-                # For real-world integration, replace the below line with gaze detection
-                detected_points.append(point)
 
-            cv2.destroyWindow("Calibration")
-
-            if len(detected_points) == len(grid_points):
-                Calibration.map_gaze_to_screen(grid_points, detected_points, monitor.name)
-                calibration_data[monitor.name] = detected_points
+            # Average the gaze samples for stability
+            if gaze_samples:
+                avg_gaze = np.mean(gaze_samples, axis=0)
+                detected_gaze_points.append(avg_gaze)
+                print(f"Captured gaze point {i + 1}: {avg_gaze}")
             else:
-                print(f"Calibration for monitor {monitor.name} was incomplete.")
+                print(f"Failed to capture gaze for point {i + 1}. Using fallback center point.")
+                detected_gaze_points.append(point)  # Fallback to grid point
 
-        print("Calibration complete for all monitors.")
-        return calibration_data
+        cap.release()
+        cv2.destroyWindow("Calibration")
 
-    @staticmethod
-    def map_gaze_to_screen(screen_points, detected_gaze_points, monitor_name):
-        """Maps detected gaze points to screen coordinates using homography."""
-        try:
-            screen_points = np.array(screen_points, dtype=np.float32)
-            detected_gaze_points = np.array(detected_gaze_points, dtype=np.float32)
-            homography_matrix, _ = cv2.findHomography(detected_gaze_points, screen_points)
-
-            # Save the homography matrix for this monitor
-            homography_dir = "calibration_data"
-            os.makedirs(homography_dir, exist_ok=True)
-            matrix_path = os.path.join(homography_dir, f"homography_matrix_{monitor_name}.npy")
-            np.save(matrix_path, homography_matrix)
-            print(f"Homography matrix saved for monitor: {monitor_name} at {matrix_path}")
-        except Exception as e:
-            print(f"Error mapping gaze to screen for monitor {monitor_name}: {e}")
+        # Save homography matrix
+        if len(detected_gaze_points) >= 4:
+            HomographyManager.save_homography_matrix(grid_points, detected_gaze_points)
+            print("Calibration complete.")
+        else:
+            print("Error: Not enough valid points for homography calculation.")
 
     @staticmethod
-    def transform_gaze_to_screen(gaze_point, monitor_name):
-        """Transforms a gaze point using the saved homography matrix for the given monitor."""
-        try:
-            homography_dir = "calibration_data"
-            matrix_path = os.path.join(homography_dir, f"homography_matrix_{monitor_name}.npy")
-            if not os.path.exists(matrix_path):
-                raise FileNotFoundError(f"Homography matrix for monitor {monitor_name} not found.")
-
-            homography_matrix = np.load(matrix_path)
-            gaze_point = np.array([[gaze_point]], dtype=np.float32)
-            transformed_point = cv2.perspectiveTransform(gaze_point, homography_matrix)
-            return transformed_point[0][0]
-        except Exception as e:
-            print(f"Error transforming gaze point for monitor {monitor_name}: {e}")
-            return gaze_point  # Fallback to raw gaze point if transformation fails
+    def map_gaze_to_screen(gaze_point):
+        """Transforms a gaze point using the saved homography matrix."""
+        return HomographyManager.apply_homography(*gaze_point)
